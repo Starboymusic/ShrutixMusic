@@ -7,7 +7,10 @@ from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from py_yt import VideosSearch, Playlist
 import aiohttp
-from config import API_URL, API_KEY
+
+API_URL = os.environ.get("SHRUTI_API_URL", "https://api.shrutibots.site")
+
+API_KEY = os.environ.get("SHRUTI_API_KEY", "YOUR_API_KEY") ## Get This API KEY FROM TELEGRAM BOT USERNAME: @SHRUTIAPIBOT 
 
 DOWNLOAD_DIR = "downloads"
 
@@ -83,6 +86,26 @@ async def download_video(link: str) -> str:
             except Exception:
                 pass
         return None
+
+
+async def get_autoplay(video_id: str) -> list:
+    video_id = video_id.split("v=")[-1].split("&")[0] if "v=" in video_id else video_id
+    if not video_id or len(video_id) < 3:
+        return []
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{API_URL}/autoplay",
+                params={"video_id": video_id, "api_key": API_KEY},
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+                return data.get("tracks", [])
+    except Exception:
+        return []
 
 
 class YouTubeAPI:
