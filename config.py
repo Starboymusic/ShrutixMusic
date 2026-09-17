@@ -37,15 +37,6 @@ UPSTREAM_BRANCH = getenv("UPSTREAM_BRANCH", "main")
 GIT_TOKEN = getenv("GIT_TOKEN")
 
 # Get API Key from @SHRUTIAPIBOT
-API_URL = getenv(
-    "SHRUTI_API_URL",
-    "https://api.shrutibots.site"
-)
-
-API_KEY = getenv(
-    "SHRUTI_API_KEY",
-    "YOUR_API_KEY"
-)
 
 SUPPORT_CHANNEL = getenv(
     "SUPPORT_CHANNEL",
