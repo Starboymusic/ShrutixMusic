@@ -36,7 +36,7 @@ from ShrutixMusic.utils.exceptions import AssistantErr
 from ShrutixMusic.utils.formatters import check_duration, seconds_to_min, speed_converter
 from ShrutixMusic.utils.rich_stream import send_now_playing_rich
 from ShrutixMusic.utils.stream.autoclear import auto_clean
-from ShrutixMusic.utils.stream.autoplay import try_autoplay
+from ShrutixMusic.utils.stream.autoplay import discard_prefetch, try_autoplay
 from ShrutixMusic.utils.stream.history import record_played
 from ShrutixMusic.utils.thumbnails import get_thumb
 from strings import get_string
@@ -47,6 +47,7 @@ counter = {}
 
 async def _clear_(chat_id):
     db[chat_id] = []
+    discard_prefetch(chat_id)
     await remove_active_video_chat(chat_id)
     await remove_active_chat(chat_id)
 
