@@ -2,6 +2,7 @@ import asyncio
 
 from ShrutixMusic.misc import db
 from ShrutixMusic.utils.database import get_active_chats, is_music_playing
+from ShrutixMusic.utils.stream.autoplay import schedule_prefetch
 
 
 async def timer():
@@ -19,6 +20,10 @@ async def timer():
             if db[chat_id][0]["played"] >= duration:
                 continue
             db[chat_id][0]["played"] += 1
+            try:
+                await schedule_prefetch(chat_id, playing)
+            except Exception:
+                pass
 
 
 asyncio.create_task(timer())
