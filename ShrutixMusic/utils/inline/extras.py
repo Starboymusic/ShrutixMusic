@@ -1,3 +1,4 @@
+from pyrogram import enums
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import SUPPORT_CHAT
@@ -34,6 +35,7 @@ def supp_markup(_):
                 InlineKeyboardButton(
                     text=_["S_B_9"],
                     url=SUPPORT_CHAT,
+                    style=enums.ButtonStyle.PRIMARY,
                 ),
             ]
         ]

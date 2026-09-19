@@ -1,7 +1,9 @@
+# ShrutixMusic/utils/inline/play.py
 import math
 
 from pyrogram.types import InlineKeyboardButton
 
+from ShrutixMusic.utils.database import is_autoplay
 from ShrutixMusic.utils.formatters import time_to_seconds
 
 
@@ -71,7 +73,13 @@ def stream_markup_timer(_, chat_id, played, dur):
     return buttons
 
 
-def stream_markup(_, chat_id):
+def autoplay_markup(chat_id, mode: bool):
+    text = "🔁 Autoplay: ON" if mode else "🔁 Autoplay: OFF"
+    return [InlineKeyboardButton(text=text, callback_data=f"autoplay {chat_id}")]
+
+
+async def stream_markup(_, chat_id):
+    mode = await is_autoplay(chat_id)
     buttons = [
         [
             InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}"),
@@ -80,6 +88,7 @@ def stream_markup(_, chat_id):
             InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}"),
             InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}"),
         ],
+        autoplay_markup(chat_id, mode),
         [InlineKeyboardButton(text=_["CLOSE_BUTTON"], callback_data="close")],
     ]
     return buttons
