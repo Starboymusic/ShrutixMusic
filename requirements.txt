@@ -8,12 +8,12 @@ gitpython
 hachoir
 heroku3
 httpx[http2]
+kurigram>=2.2.26
 motor
 pillow
 psutil
 py-tgcalls==0.9.7
 pykeyboard
-pyrofork
 python-dotenv
 pyyaml
 requests
