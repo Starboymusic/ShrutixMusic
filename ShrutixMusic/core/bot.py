@@ -11,6 +11,19 @@ import config
 from ..logging import LOGGER
 
 
+TEXT_FALLBACK_OPTIONS = (
+    "parse_mode",
+    "disable_notification",
+    "message_thread_id",
+    "effect_id",
+    "reply_parameters",
+    "protect_content",
+    "reply_markup",
+    "reply_to_message_id",
+    "business_connection_id",
+)
+
+
 class Shruti(Client):
     def __init__(self):
         LOGGER(__name__).info(f"Starting Bot...")
@@ -54,6 +67,21 @@ class Shruti(Client):
             )
             exit()
         LOGGER(__name__).info(f"Music Bot Started as {self.name}")
+
+    async def send_photo(self, chat_id, photo, caption="", *args, **kwargs):
+        try:
+            return await super().send_photo(chat_id, photo, caption, *args, **kwargs)
+        except (errors.ChatSendPhotosForbidden, errors.ChatSendMediaForbidden):
+            if not caption:
+                raise
+            options = {
+                key: kwargs[key]
+                for key in TEXT_FALLBACK_OPTIONS
+                if kwargs.get(key) is not None
+            }
+            if kwargs.get("caption_entities"):
+                options["entities"] = kwargs["caption_entities"]
+            return await self.send_message(chat_id, caption, **options)
 
     async def stop(self):
         await super().stop()
