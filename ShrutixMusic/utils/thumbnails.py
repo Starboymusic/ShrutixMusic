@@ -1,121 +1,67 @@
 import os
-import re
+from io import BytesIO
 
-import aiofiles
 import aiohttp
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
-from unidecode import unidecode
-from py_yt import VideosSearch
+from PIL import Image
 
-from ShrutixMusic import nand
 from config import YOUTUBE_IMG_URL
 
-
-def changeImageSize(maxWidth, maxHeight, image):
-    widthRatio = maxWidth / image.size[0]
-    heightRatio = maxHeight / image.size[1]
-    newWidth = int(widthRatio * image.size[0])
-    newHeight = int(heightRatio * image.size[1])
-    newImage = image.resize((newWidth, newHeight))
-    return newImage
+_SOURCES = ("maxresdefault", "sddefault", "hqdefault", "mqdefault")
+_MIN_WIDTH = 300
+_BAR_LIMIT = 24
 
 
-def clear(text):
-    list = text.split(" ")
-    title = ""
-    for i in list:
-        if len(title) + len(i) < 60:
-            title += " " + i
-    return title.strip()
+def _trim_bars(image):
+    width, height = image.size
+    bar = int(height * 0.125)
+    if bar < 1:
+        return image, False
+    top = image.crop((0, 0, width, bar)).convert("L").getextrema()[1]
+    bottom = image.crop((0, height - bar, width, height)).convert("L").getextrema()[1]
+    if top < _BAR_LIMIT and bottom < _BAR_LIMIT:
+        return image.crop((0, bar, width, height - bar)), True
+    return image, False
+
+
+async def _fetch(session, videoid, name):
+    url = f"https://i.ytimg.com/vi/{videoid}/{name}.jpg"
+    try:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return None
+            raw = await resp.read()
+    except Exception:
+        return None
+    try:
+        image = Image.open(BytesIO(raw))
+        image.load()
+    except Exception:
+        return None
+    if image.width < _MIN_WIDTH:
+        return None
+    return raw, image
 
 
 async def get_thumb(videoid):
-    if os.path.isfile(f"cache/{videoid}.png"):
-        return f"cache/{videoid}.png"
-
-    url = f"https://www.youtube.com/watch?v={videoid}"
+    path = f"cache/{videoid}.jpg"
+    if os.path.isfile(path) and os.path.getsize(path) > 0:
+        return path
     try:
-        results = VideosSearch(url, limit=1)
-        for result in (await results.next())["result"]:
-            try:
-                title = result["title"]
-                title = re.sub("\W+", " ", title)
-                title = title.title()
-            except:
-                title = "Unsupported Title"
-            try:
-                duration = result["duration"]
-            except:
-                duration = "Unknown Mins"
-            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
-            try:
-                views = result["viewCount"]["short"]
-            except:
-                views = "Unknown Views"
-            try:
-                channel = result["channel"]["name"]
-            except:
-                channel = "Unknown Channel"
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(thumbnail) as resp:
-                if resp.status == 200:
-                    f = await aiofiles.open(f"cache/thumb{videoid}.png", mode="wb")
-                    await f.write(await resp.read())
-                    await f.close()
-
-        youtube = Image.open(f"cache/thumb{videoid}.png")
-        image1 = changeImageSize(1280, 720, youtube)
-        image2 = image1.convert("RGBA")
-        background = image2.filter(filter=ImageFilter.BoxBlur(10))
-        enhancer = ImageEnhance.Brightness(background)
-        background = enhancer.enhance(0.5)
-        draw = ImageDraw.Draw(background)
-        arial = ImageFont.truetype("ShrutixMusic/assets/font2.ttf", 30)
-        font = ImageFont.truetype("ShrutixMusic/assets/font.ttf", 30)
-        draw.text((1110, 8), unidecode(nand.name), fill="white", font=arial)
-        draw.text(
-            (55, 560),
-            f"{channel} | {views[:23]}",
-            (255, 255, 255),
-            font=arial,
-        )
-        draw.text(
-            (57, 600),
-            clear(title),
-            (255, 255, 255),
-            font=font,
-        )
-        draw.line(
-            [(55, 660), (1220, 660)],
-            fill="white",
-            width=5,
-            joint="curve",
-        )
-        draw.ellipse(
-            [(918, 648), (942, 672)],
-            outline="white",
-            fill="white",
-            width=15,
-        )
-        draw.text(
-            (36, 685),
-            "00:00",
-            (255, 255, 255),
-            font=arial,
-        )
-        draw.text(
-            (1185, 685),
-            f"{duration[:23]}",
-            (255, 255, 255),
-            font=arial,
-        )
-        try:
-            os.remove(f"cache/thumb{videoid}.png")
-        except:
-            pass
-        background.save(f"cache/{videoid}.png")
-        return f"cache/{videoid}.png"
-    except Exception as e:
-        print(e)
-        return YOUTUBE_IMG_URL
+        os.makedirs("cache", exist_ok=True)
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for name in _SOURCES:
+                got = await _fetch(session, videoid, name)
+                if not got:
+                    continue
+                raw, image = got
+                image, trimmed = _trim_bars(image)
+                if trimmed:
+                    image.convert("RGB").save(path, "JPEG", quality=95)
+                else:
+                    with open(path, "wb") as f:
+                        f.write(raw)
+                return path
+    except Exception:
+        pass
+    return YOUTUBE_IMG_URL

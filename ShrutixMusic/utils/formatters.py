@@ -1,4 +1,6 @@
+# ShrutixMusic/utils/formatters.py
 import json
+import re
 import subprocess
 
 
@@ -114,6 +116,10 @@ def speed_converter(seconds, speed):
             convert = "00:{:02d}".format(s)
             return convert, collect
     return "-"
+
+
+async def with_autoplay_status(text: str, chat_id: int) -> str:
+    return text
 
 
 def check_duration(file_path):

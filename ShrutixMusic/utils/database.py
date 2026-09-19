@@ -1,3 +1,4 @@
+# ShrutixMusic/utils/database.py
 import random
 from typing import Dict, List, Union
 
@@ -19,6 +20,7 @@ onoffdb = mongodb.onoffper
 playmodedb = mongodb.playmode
 playtypedb = mongodb.playtypedb
 skipdb = mongodb.skipmode
+autoplaydb = mongodb.autoplay
 sudoersdb = mongodb.sudoers
 usersdb = mongodb.tgusersdb
 
@@ -37,6 +39,7 @@ pause = {}
 playmode = {}
 playtype = {}
 skipmode = {}
+autoplay = {}
 
 
 async def get_assistant_number(chat_id: int) -> str:
@@ -176,6 +179,32 @@ async def skip_off(chat_id: int):
     user = await skipdb.find_one({"chat_id": chat_id})
     if not user:
         return await skipdb.insert_one({"chat_id": chat_id})
+
+
+async def is_autoplay(chat_id: int) -> bool:
+    mode = autoplay.get(chat_id)
+    if mode is not None:
+        return mode
+    user = await autoplaydb.find_one({"chat_id": chat_id})
+    if not user:
+        autoplay[chat_id] = False
+        return False
+    autoplay[chat_id] = True
+    return True
+
+
+async def autoplay_on(chat_id: int):
+    autoplay[chat_id] = True
+    user = await autoplaydb.find_one({"chat_id": chat_id})
+    if not user:
+        await autoplaydb.insert_one({"chat_id": chat_id})
+
+
+async def autoplay_off(chat_id: int):
+    autoplay[chat_id] = False
+    user = await autoplaydb.find_one({"chat_id": chat_id})
+    if user:
+        await autoplaydb.delete_one({"chat_id": chat_id})
 
 
 async def get_upvote_count(chat_id: int) -> int:
