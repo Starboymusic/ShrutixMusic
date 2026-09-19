@@ -4,7 +4,7 @@ import re
 
 from ShrutixMusic import YouTube, nand
 from ShrutixMusic.misc import db
-from ShrutixMusic.platforms.Youtube import get_autoplay
+from ShrutixMusic.platforms.Youtube import get_autoplay, is_external_path
 from ShrutixMusic.utils.database import get_lang, is_autoplay
 from ShrutixMusic.utils.formatters import seconds_to_min
 from ShrutixMusic.utils.rich_stream import send_now_playing_rich
@@ -46,7 +46,7 @@ def _in_any_queue(path):
 
 
 def _release_file(path):
-    if not path or _in_any_queue(path):
+    if not path or is_external_path(path) or _in_any_queue(path):
         return
     try:
         if os.path.exists(path):
