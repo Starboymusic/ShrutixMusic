@@ -15,18 +15,64 @@ API_KEY = os.environ.get("SHRUTI_API_KEY", "YOUR_API_KEY") ## Get This API KEY F
 DOWNLOAD_DIR = "downloads"
 
 
+def _env_dir(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return os.path.abspath(os.path.expanduser(value)) if value else ""
+
+
+AUDIO_DOWNLOAD_PATH = _env_dir("AUDIO_DOWNLOAD_PATH")
+VIDEO_DOWNLOAD_PATH = _env_dir("VIDEO_DOWNLOAD_PATH")
+AUDIO_EXTENSIONS = ("webm", "m4a", "mp3", "ogg")
+VIDEO_EXTENSIONS = ("mp4", "mkv", "webm")
+
+
+def is_external_path(path) -> bool:
+    if not path:
+        return False
+    full = os.path.abspath(str(path))
+    for base in (AUDIO_DOWNLOAD_PATH, VIDEO_DOWNLOAD_PATH):
+        if base and full.startswith(base + os.sep):
+            return True
+    return False
+
+
+def _find_external(directory: str, video_id: str, extensions, resp=None):
+    names = []
+    if resp is not None:
+        disposition = resp.content_disposition
+        if disposition and disposition.filename:
+            name = os.path.basename(disposition.filename)
+            if name.startswith(video_id + "."):
+                names.append(name)
+    names.extend(f"{video_id}.{ext}" for ext in extensions)
+    for name in names:
+        path = os.path.join(directory, name)
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            return path
+    return None
+
+
 def time_to_seconds(time):
     stringt = str(time)
     return sum(int(x) * 60 ** i for i, x in enumerate(reversed(stringt.split(":"))))
 
 
-async def download_song(link: str) -> str:
+async def _download_media(link: str, kind: str, timeout: int) -> str:
     video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
     if not video_id or len(video_id) < 3:
         return None
 
+    is_audio = kind == "audio"
+    external = AUDIO_DOWNLOAD_PATH if is_audio else VIDEO_DOWNLOAD_PATH
+    extensions = AUDIO_EXTENSIONS if is_audio else VIDEO_EXTENSIONS
+
+    if external:
+        found = _find_external(external, video_id, extensions)
+        if found:
+            return found
+
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{'mp3' if is_audio else 'mp4'}")
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
@@ -34,11 +80,15 @@ async def download_song(link: str) -> str:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{API_URL}/download",
-                params={"url": video_id, "type": "audio", "api_key": API_KEY},
-                timeout=aiohttp.ClientTimeout(total=300)
+                params={"url": video_id, "type": kind, "api_key": API_KEY},
+                timeout=aiohttp.ClientTimeout(total=timeout)
             ) as resp:
                 if resp.status != 200:
                     return None
+                if external:
+                    found = _find_external(external, video_id, extensions, resp)
+                    if found:
+                        return found
                 with open(file_path, "wb") as f:
                     async for chunk in resp.content.iter_chunked(131072):
                         f.write(chunk)
@@ -52,40 +102,14 @@ async def download_song(link: str) -> str:
             except Exception:
                 pass
         return None
+
+
+async def download_song(link: str) -> str:
+    return await _download_media(link, "audio", 300)
 
 
 async def download_video(link: str) -> str:
-    video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
-    if not video_id or len(video_id) < 3:
-        return None
-
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-        return file_path
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{API_URL}/download",
-                params={"url": video_id, "type": "video", "api_key": API_KEY},
-                timeout=aiohttp.ClientTimeout(total=600)
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                with open(file_path, "wb") as f:
-                    async for chunk in resp.content.iter_chunked(131072):
-                        f.write(chunk)
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            return file_path
-        return None
-    except Exception:
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-        return None
+    return await _download_media(link, "video", 600)
 
 
 AUTOPLAY_REQUEST_TIMEOUT = 20
