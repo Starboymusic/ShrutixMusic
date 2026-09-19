@@ -88,24 +88,47 @@ async def download_video(link: str) -> str:
         return None
 
 
-async def get_autoplay(video_id: str) -> list:
+AUTOPLAY_REQUEST_TIMEOUT = 20
+AUTOPLAY_MAX_RETRIES = 3
+AUTOPLAY_RETRY_DELAY = 1
+AUTOPLAY_RETRYABLE_STATUS = (408, 425, 429, 500, 502, 503, 504)
+
+
+async def get_autoplay(
+    video_id: str,
+    timeout: int = AUTOPLAY_REQUEST_TIMEOUT,
+    retries: int = AUTOPLAY_MAX_RETRIES,
+) -> list:
     video_id = video_id.split("v=")[-1].split("&")[0] if "v=" in video_id else video_id
     if not video_id or len(video_id) < 3:
         return []
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{API_URL}/autoplay",
-                params={"video_id": video_id, "api_key": API_KEY},
-                timeout=aiohttp.ClientTimeout(total=20)
-            ) as resp:
-                if resp.status != 200:
+    attempt = 0
+    while attempt < retries:
+        attempt += 1
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{API_URL}/autoplay",
+                    params={"video_id": video_id, "api_key": API_KEY},
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("tracks", [])
+                    if resp.status in AUTOPLAY_RETRYABLE_STATUS and attempt < retries:
+                        await asyncio.sleep(AUTOPLAY_RETRY_DELAY)
+                        continue
                     return []
-                data = await resp.json()
-                return data.get("tracks", [])
-    except Exception:
-        return []
+        except (asyncio.TimeoutError, aiohttp.ClientError):
+            if attempt < retries:
+                await asyncio.sleep(AUTOPLAY_RETRY_DELAY)
+                continue
+            return []
+        except Exception:
+            return []
+
+    return []
 
 
 class YouTubeAPI:
