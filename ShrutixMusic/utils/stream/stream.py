@@ -1,8 +1,8 @@
+import asyncio
 import os
 from random import randint
 from typing import Union
-
-from pyrogram.types import InlineKeyboardMarkup
+from uuid import uuid4
 
 import config
 from ShrutixMusic import Carbon, YouTube, nand
@@ -10,13 +10,78 @@ from ShrutixMusic.core.call import Shruti
 from ShrutixMusic.misc import db
 from ShrutixMusic.utils.database import add_active_video_chat, is_active_chat
 from ShrutixMusic.utils.exceptions import AssistantErr
-from ShrutixMusic.utils.inline import aq_markup, close_markup, stream_markup
+from ShrutixMusic.utils.inline import close_markup
 from ShrutixMusic.utils.pastebin import ShrutiBin
+from ShrutixMusic.utils.rich_stream import (
+    release_mystic,
+    send_now_playing_rich,
+    send_queue_rich,
+)
 from ShrutixMusic.utils.stream.queue import put_queue, put_queue_index
 from ShrutixMusic.utils.thumbnails import get_thumb
 
 
+async def _fetch(_, chat_id, vidid, mystic, video):
+    status = True if video else None
+    task = asyncio.ensure_future(
+        YouTube.download(vidid, mystic, videoid=True, video=status)
+    )
+    await Shruti.await_prejoin(chat_id)
+    try:
+        file_path, direct = await task
+    except Exception:
+        file_path, direct = None, False
+    if not file_path:
+        raise AssistantErr(_["play_14"])
+    return file_path, direct
+
+
+async def _announce_queue(_, chat_id, original_chat_id, mystic, title, duration_min, user_name):
+    position = len(db.get(chat_id)) - 1
+    qid = uuid4().hex[:8]
+    db[chat_id][-1]["qid"] = qid
+    await send_queue_rich(
+        nand,
+        chat_id,
+        original_chat_id,
+        _["queue_4"].format(position, title[:27], duration_min, user_name),
+        qid,
+        replace=mystic,
+    )
+    return position
+
+
 async def stream(
+    _,
+    mystic,
+    user_id,
+    result,
+    chat_id,
+    user_name,
+    original_chat_id,
+    video: Union[bool, str] = None,
+    streamtype: Union[bool, str] = None,
+    spotify: Union[bool, str] = None,
+    forceplay: Union[bool, str] = None,
+):
+    outcome = await _stream(
+        _,
+        mystic,
+        user_id,
+        result,
+        chat_id,
+        user_name,
+        original_chat_id,
+        video,
+        streamtype,
+        spotify,
+        forceplay,
+    )
+    await release_mystic(mystic)
+    return outcome
+
+
+async def _stream(
     _,
     mystic,
     user_id,
@@ -73,12 +138,8 @@ async def stream(
                 if not forceplay:
                     db[chat_id] = []
                 status = True if video else None
-                try:
-                    file_path, direct = await YouTube.download(
-                        vidid, mystic, video=status, videoid=True
-                    )
-                except:
-                    raise AssistantErr(_["play_14"])
+                thumb_task = asyncio.ensure_future(get_thumb(vidid))
+                file_path, direct = await _fetch(_, chat_id, vidid, mystic, video)
                 await Shruti.join_call(
                     chat_id,
                     original_chat_id,
@@ -98,18 +159,19 @@ async def stream(
                     "video" if video else "audio",
                     forceplay=forceplay,
                 )
-                img = await get_thumb(vidid)
-                button = stream_markup(_, chat_id)
-                run = await nand.send_photo(
+                img = await thumb_task
+                run = await send_now_playing_rich(
+                    nand,
+                    chat_id,
                     original_chat_id,
-                    photo=img,
-                    caption=_["stream_1"].format(
+                    img,
+                    _["stream_1"].format(
                         f"https://t.me/{nand.username}?start=info_{vidid}",
                         title[:23],
                         duration_min,
                         user_name,
                     ),
-                    reply_markup=InlineKeyboardMarkup(button),
+                    replace=mystic,
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "stream"
@@ -137,68 +199,66 @@ async def stream(
         duration_min = result["duration_min"]
         thumbnail = result["thumb"]
         status = True if video else None
-        try:
-            file_path, direct = await YouTube.download(
-                vidid, mystic, videoid=True, video=status
-            )
-        except:
-            raise AssistantErr(_["play_14"])
-        if await is_active_chat(chat_id):
-            await put_queue(
-                chat_id,
-                original_chat_id,
-                file_path if direct else f"vid_{vidid}",
-                title,
-                duration_min,
-                user_name,
-                vidid,
-                user_id,
-                "video" if video else "audio",
-            )
-            position = len(db.get(chat_id)) - 1
-            button = aq_markup(_, chat_id)
-            await nand.send_message(
-                chat_id=original_chat_id,
-                text=_["queue_4"].format(position, title[:27], duration_min, user_name),
-                reply_markup=InlineKeyboardMarkup(button),
-            )
-        else:
-            if not forceplay:
-                db[chat_id] = []
-            await Shruti.join_call(
-                chat_id,
-                original_chat_id,
-                file_path,
-                video=status,
-                image=thumbnail,
-            )
-            await put_queue(
-                chat_id,
-                original_chat_id,
-                file_path if direct else f"vid_{vidid}",
-                title,
-                duration_min,
-                user_name,
-                vidid,
-                user_id,
-                "video" if video else "audio",
-                forceplay=forceplay,
-            )
-            img = await get_thumb(vidid)
-            button = stream_markup(_, chat_id)
-            run = await nand.send_photo(
-                original_chat_id,
-                photo=img,
-                caption=_["stream_1"].format(
-                    f"https://t.me/{nand.username}?start=info_{vidid}",
-                    title[:23],
+        thumb_task = (
+            None
+            if await is_active_chat(chat_id)
+            else asyncio.ensure_future(get_thumb(vidid))
+        )
+        file_path, direct = await _fetch(_, chat_id, vidid, mystic, video)
+        async with Shruti.chat_lock(chat_id):
+            if await is_active_chat(chat_id):
+                await put_queue(
+                    chat_id,
+                    original_chat_id,
+                    file_path if direct else f"vid_{vidid}",
+                    title,
                     duration_min,
                     user_name,
-                ),
-                reply_markup=InlineKeyboardMarkup(button),
-            )
-            db[chat_id][0]["mystic"] = run
-            db[chat_id][0]["markup"] = "stream"
+                    vidid,
+                    user_id,
+                    "video" if video else "audio",
+                )
+                await _announce_queue(
+                    _, chat_id, original_chat_id, mystic, title, duration_min, user_name
+                )
+            else:
+                if not forceplay:
+                    db[chat_id] = []
+                await Shruti.join_call(
+                    chat_id,
+                    original_chat_id,
+                    file_path,
+                    video=status,
+                    image=thumbnail,
+                )
+                await put_queue(
+                    chat_id,
+                    original_chat_id,
+                    file_path if direct else f"vid_{vidid}",
+                    title,
+                    duration_min,
+                    user_name,
+                    vidid,
+                    user_id,
+                    "video" if video else "audio",
+                    forceplay=forceplay,
+                )
+                img = await (thumb_task if thumb_task else get_thumb(vidid))
+                run = await send_now_playing_rich(
+                    nand,
+                    chat_id,
+                    original_chat_id,
+                    img,
+                    _["stream_1"].format(
+                        f"https://t.me/{nand.username}?start=info_{vidid}",
+                        title[:23],
+                        duration_min,
+                        user_name,
+                    ),
+                    replace=mystic,
+                )
+                db[chat_id][0]["mystic"] = run
+                db[chat_id][0]["markup"] = "stream"
     elif streamtype == "soundcloud":
         file_path = result["filepath"]
         title = result["title"]
@@ -215,12 +275,8 @@ async def stream(
                 user_id,
                 "audio",
             )
-            position = len(db.get(chat_id)) - 1
-            button = aq_markup(_, chat_id)
-            await nand.send_message(
-                chat_id=original_chat_id,
-                text=_["queue_4"].format(position, title[:27], duration_min, user_name),
-                reply_markup=InlineKeyboardMarkup(button),
+            await _announce_queue(
+                _, chat_id, original_chat_id, mystic, title, duration_min, user_name
             )
         else:
             if not forceplay:
@@ -238,14 +294,15 @@ async def stream(
                 "audio",
                 forceplay=forceplay,
             )
-            button = stream_markup(_, chat_id)
-            run = await nand.send_photo(
+            run = await send_now_playing_rich(
+                nand,
+                chat_id,
                 original_chat_id,
-                photo=config.SOUNCLOUD_IMG_URL,
-                caption=_["stream_1"].format(
+                config.SOUNCLOUD_IMG_URL,
+                _["stream_1"].format(
                     config.SUPPORT_CHAT, title[:23], duration_min, user_name
                 ),
-                reply_markup=InlineKeyboardMarkup(button),
+                replace=mystic,
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
@@ -267,12 +324,8 @@ async def stream(
                 user_id,
                 "video" if video else "audio",
             )
-            position = len(db.get(chat_id)) - 1
-            button = aq_markup(_, chat_id)
-            await nand.send_message(
-                chat_id=original_chat_id,
-                text=_["queue_4"].format(position, title[:27], duration_min, user_name),
-                reply_markup=InlineKeyboardMarkup(button),
+            await _announce_queue(
+                _, chat_id, original_chat_id, mystic, title, duration_min, user_name
             )
         else:
             if not forceplay:
@@ -292,12 +345,13 @@ async def stream(
             )
             if video:
                 await add_active_video_chat(chat_id)
-            button = stream_markup(_, chat_id)
-            run = await nand.send_photo(
+            run = await send_now_playing_rich(
+                nand,
+                chat_id,
                 original_chat_id,
-                photo=config.TELEGRAM_VIDEO_URL if video else config.TELEGRAM_AUDIO_URL,
-                caption=_["stream_1"].format(link, title[:23], duration_min, user_name),
-                reply_markup=InlineKeyboardMarkup(button),
+                config.TELEGRAM_VIDEO_URL if video else config.TELEGRAM_AUDIO_URL,
+                _["stream_1"].format(link, title[:23], duration_min, user_name),
+                replace=mystic,
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
@@ -320,12 +374,8 @@ async def stream(
                 user_id,
                 "video" if video else "audio",
             )
-            position = len(db.get(chat_id)) - 1
-            button = aq_markup(_, chat_id)
-            await nand.send_message(
-                chat_id=original_chat_id,
-                text=_["queue_4"].format(position, title[:27], duration_min, user_name),
-                reply_markup=InlineKeyboardMarkup(button),
+            await _announce_queue(
+                _, chat_id, original_chat_id, mystic, title, duration_min, user_name
             )
         else:
             if not forceplay:
@@ -353,17 +403,18 @@ async def stream(
                 forceplay=forceplay,
             )
             img = await get_thumb(vidid)
-            button = stream_markup(_, chat_id)
-            run = await nand.send_photo(
+            run = await send_now_playing_rich(
+                nand,
+                chat_id,
                 original_chat_id,
-                photo=img,
-                caption=_["stream_1"].format(
+                img,
+                _["stream_1"].format(
                     f"https://t.me/{nand.username}?start=info_{vidid}",
                     title[:23],
                     duration_min,
                     user_name,
                 ),
-                reply_markup=InlineKeyboardMarkup(button),
+                replace=mystic,
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
@@ -382,11 +433,8 @@ async def stream(
                 link,
                 "video" if video else "audio",
             )
-            position = len(db.get(chat_id)) - 1
-            button = aq_markup(_, chat_id)
-            await mystic.edit_text(
-                text=_["queue_4"].format(position, title[:27], duration_min, user_name),
-                reply_markup=InlineKeyboardMarkup(button),
+            await _announce_queue(
+                _, chat_id, original_chat_id, mystic, title, duration_min, user_name
             )
         else:
             if not forceplay:
@@ -408,13 +456,13 @@ async def stream(
                 "video" if video else "audio",
                 forceplay=forceplay,
             )
-            button = stream_markup(_, chat_id)
-            run = await nand.send_photo(
+            run = await send_now_playing_rich(
+                nand,
+                chat_id,
                 original_chat_id,
-                photo=config.STREAM_IMG_URL,
-                caption=_["stream_2"].format(user_name),
-                reply_markup=InlineKeyboardMarkup(button),
+                config.STREAM_IMG_URL,
+                _["stream_2"].format(user_name),
+                replace=mystic,
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
-            await mystic.delete()
