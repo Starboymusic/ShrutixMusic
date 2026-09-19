@@ -18,10 +18,11 @@ basic = {}
 
 
 def get_image(videoid):
-    if os.path.isfile(f"cache/{videoid}.png"):
-        return f"cache/{videoid}.png"
-    else:
-        return config.YOUTUBE_IMG_URL
+    for ext in ("jpg", "png"):
+        path = f"cache/{videoid}.{ext}"
+        if os.path.isfile(path):
+            return path
+    return config.YOUTUBE_IMG_URL
 
 
 def get_duration(playing):
