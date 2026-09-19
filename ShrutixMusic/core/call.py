@@ -1,10 +1,10 @@
 import asyncio
 import os
+import wave
 from datetime import datetime, timedelta
 from typing import Union
 
 from pyrogram import Client
-from pyrogram.types import InlineKeyboardMarkup
 from pytgcalls import PyTgCalls, StreamType
 from pytgcalls.exceptions import (
     AlreadyJoinedError,
@@ -25,6 +25,7 @@ from ShrutixMusic.utils.database import (
     get_lang,
     get_loop,
     group_assistant,
+    is_active_chat,
     is_autoend,
     music_on,
     remove_active_chat,
@@ -33,8 +34,10 @@ from ShrutixMusic.utils.database import (
 )
 from ShrutixMusic.utils.exceptions import AssistantErr
 from ShrutixMusic.utils.formatters import check_duration, seconds_to_min, speed_converter
-from ShrutixMusic.utils.inline.play import stream_markup
+from ShrutixMusic.utils.rich_stream import send_now_playing_rich
 from ShrutixMusic.utils.stream.autoclear import auto_clean
+from ShrutixMusic.utils.stream.autoplay import try_autoplay
+from ShrutixMusic.utils.stream.history import record_played
 from ShrutixMusic.utils.thumbnails import get_thumb
 from strings import get_string
 
@@ -46,6 +49,18 @@ async def _clear_(chat_id):
     db[chat_id] = []
     await remove_active_video_chat(chat_id)
     await remove_active_chat(chat_id)
+
+
+def _silence_path():
+    path = os.path.abspath(os.path.join("cache", "silence.wav"))
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with wave.open(path, "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(1)
+            f.setframerate(8000)
+            f.writeframes(b"\x80" * 8000 * 120)
+    return path
 
 
 class Call(PyTgCalls):
@@ -100,6 +115,61 @@ class Call(PyTgCalls):
             self.userbot5,
             cache_duration=100,
         )
+        self._prejoin_tasks = {}
+        self._chat_locks = {}
+
+    def chat_lock(self, chat_id: int):
+        lock = self._chat_locks.get(chat_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._chat_locks[chat_id] = lock
+        return lock
+
+    async def _assistant_join(self, assistant, chat_id: int, stream, _):
+        try:
+            await assistant.join_group_call(
+                chat_id,
+                stream,
+                stream_type=StreamType().pulse_stream,
+            )
+        except NoActiveGroupCall:
+            raise AssistantErr(_["call_8"])
+        except AlreadyJoinedError:
+            raise AssistantErr(_["call_9"])
+        except TelegramServerError:
+            raise AssistantErr(_["call_10"])
+
+    async def _run_prejoin(self, chat_id: int):
+        assistant = await group_assistant(self, chat_id)
+        _ = get_string(await get_lang(chat_id))
+        stream = AudioPiped(_silence_path(), audio_parameters=HighQualityAudio())
+        await self._assistant_join(assistant, chat_id, stream, _)
+
+    async def prejoin_start(self, chat_id: int) -> bool:
+        if chat_id in self._prejoin_tasks or await is_active_chat(chat_id):
+            return False
+        self._prejoin_tasks[chat_id] = asyncio.ensure_future(self._run_prejoin(chat_id))
+        return True
+
+    async def await_prejoin(self, chat_id: int):
+        task = self._prejoin_tasks.get(chat_id)
+        if task is not None:
+            await asyncio.shield(task)
+
+    async def prejoin_settle(self, chat_id: int):
+        async with self.chat_lock(chat_id):
+            task = self._prejoin_tasks.pop(chat_id, None)
+            if task is None:
+                return
+            try:
+                await task
+            except Exception:
+                return
+            try:
+                assistant = await group_assistant(self, chat_id)
+                await assistant.leave_group_call(chat_id)
+            except Exception:
+                pass
 
     async def pause_stream(self, chat_id: int):
         assistant = await group_assistant(self, chat_id)
@@ -298,27 +368,21 @@ class Call(PyTgCalls):
                 video_parameters=MediumQualityVideo(),
             )
         else:
-            stream = (
-                AudioVideoPiped(
-                    link,
-                    audio_parameters=HighQualityAudio(),
-                    video_parameters=MediumQualityVideo(),
-                )
-                if video
-                else AudioPiped(link, audio_parameters=HighQualityAudio())
-            )
-        try:
-            await assistant.join_group_call(
-                chat_id,
-                stream,
-                stream_type=StreamType().pulse_stream,
-            )
-        except NoActiveGroupCall:
-            raise AssistantErr(_["call_8"])
-        except AlreadyJoinedError:
-            raise AssistantErr(_["call_9"])
-        except TelegramServerError:
-            raise AssistantErr(_["call_10"])
+            stream = AudioPiped(link, audio_parameters=HighQualityAudio())
+        joined = False
+        task = self._prejoin_tasks.pop(chat_id, None)
+        if task is not None:
+            await task
+            try:
+                await assistant.change_stream(chat_id, stream)
+                joined = True
+            except Exception:
+                try:
+                    await assistant.leave_group_call(chat_id)
+                except Exception:
+                    pass
+        if not joined:
+            await self._assistant_join(assistant, chat_id, stream, _)
         await add_active_chat(chat_id)
         await music_on(chat_id)
         if video:
@@ -341,6 +405,8 @@ class Call(PyTgCalls):
                 await set_loop(chat_id, loop)
             await auto_clean(popped)
             if not check:
+                if await try_autoplay(chat_id, popped):
+                    return
                 await _clear_(chat_id)
                 return await client.leave_group_call(chat_id)
         except:
@@ -358,6 +424,8 @@ class Call(PyTgCalls):
             original_chat_id = check[0]["chat_id"]
             streamtype = check[0]["streamtype"]
             videoid = check[0]["vidid"]
+            if videoid and videoid not in ("telegram", "soundcloud"):
+                record_played(chat_id, videoid)
             db[chat_id][0]["played"] = 0
             exis = (check[0]).get("old_dur")
             if exis:
@@ -392,17 +460,17 @@ class Call(PyTgCalls):
                         text=_["call_6"],
                     )
                 img = await get_thumb(videoid)
-                button = stream_markup(_, chat_id)
-                run = await nand.send_photo(
-                    chat_id=original_chat_id,
-                    photo=img,
-                    caption=_["stream_1"].format(
+                run = await send_now_playing_rich(
+                    nand,
+                    chat_id,
+                    original_chat_id,
+                    img,
+                    _["stream_1"].format(
                         f"https://t.me/{nand.username}?start=info_{videoid}",
                         title[:23],
                         check[0]["dur"],
                         user,
                     ),
-                    reply_markup=InlineKeyboardMarkup(button),
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "tg"
@@ -438,18 +506,18 @@ class Call(PyTgCalls):
                         text=_["call_6"],
                     )
                 img = await get_thumb(videoid)
-                button = stream_markup(_, chat_id)
                 await mystic.delete()
-                run = await nand.send_photo(
-                    chat_id=original_chat_id,
-                    photo=img,
-                    caption=_["stream_1"].format(
+                run = await send_now_playing_rich(
+                    nand,
+                    chat_id,
+                    original_chat_id,
+                    img,
+                    _["stream_1"].format(
                         f"https://t.me/{nand.username}?start=info_{videoid}",
                         title[:23],
                         check[0]["dur"],
                         user,
                     ),
-                    reply_markup=InlineKeyboardMarkup(button),
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "stream"
@@ -470,12 +538,12 @@ class Call(PyTgCalls):
                         original_chat_id,
                         text=_["call_6"],
                     )
-                button = stream_markup(_, chat_id)
-                run = await nand.send_photo(
-                    chat_id=original_chat_id,
-                    photo=config.STREAM_IMG_URL,
-                    caption=_["stream_2"].format(user),
-                    reply_markup=InlineKeyboardMarkup(button),
+                run = await send_now_playing_rich(
+                    nand,
+                    chat_id,
+                    original_chat_id,
+                    config.STREAM_IMG_URL,
+                    _["stream_2"].format(user),
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "tg"
@@ -499,44 +567,44 @@ class Call(PyTgCalls):
                         text=_["call_6"],
                     )
                 if videoid == "telegram":
-                    button = stream_markup(_, chat_id)
-                    run = await nand.send_photo(
-                        chat_id=original_chat_id,
-                        photo=config.TELEGRAM_AUDIO_URL
+                    run = await send_now_playing_rich(
+                        nand,
+                        chat_id,
+                        original_chat_id,
+                        config.TELEGRAM_AUDIO_URL
                         if str(streamtype) == "audio"
                         else config.TELEGRAM_VIDEO_URL,
-                        caption=_["stream_1"].format(
+                        _["stream_1"].format(
                             config.SUPPORT_CHAT, title[:23], check[0]["dur"], user
                         ),
-                        reply_markup=InlineKeyboardMarkup(button),
                     )
                     db[chat_id][0]["mystic"] = run
                     db[chat_id][0]["markup"] = "tg"
                 elif videoid == "soundcloud":
-                    button = stream_markup(_, chat_id)
-                    run = await nand.send_photo(
-                        chat_id=original_chat_id,
-                        photo=config.SOUNCLOUD_IMG_URL,
-                        caption=_["stream_1"].format(
+                    run = await send_now_playing_rich(
+                        nand,
+                        chat_id,
+                        original_chat_id,
+                        config.SOUNCLOUD_IMG_URL,
+                        _["stream_1"].format(
                             config.SUPPORT_CHAT, title[:23], check[0]["dur"], user
                         ),
-                        reply_markup=InlineKeyboardMarkup(button),
                     )
                     db[chat_id][0]["mystic"] = run
                     db[chat_id][0]["markup"] = "tg"
                 else:
                     img = await get_thumb(videoid)
-                    button = stream_markup(_, chat_id)
-                    run = await nand.send_photo(
-                        chat_id=original_chat_id,
-                        photo=img,
-                        caption=_["stream_1"].format(
+                    run = await send_now_playing_rich(
+                        nand,
+                        chat_id,
+                        original_chat_id,
+                        img,
+                        _["stream_1"].format(
                             f"https://t.me/{nand.username}?start=info_{videoid}",
                             title[:23],
                             check[0]["dur"],
                             user,
                         ),
-                        reply_markup=InlineKeyboardMarkup(button),
                     )
                     db[chat_id][0]["mystic"] = run
                     db[chat_id][0]["markup"] = "stream"
@@ -594,6 +662,8 @@ class Call(PyTgCalls):
         @self.five.on_stream_end()
         async def stream_end_handler1(client, update: Update):
             if not isinstance(update, StreamAudioEnded):
+                return
+            if update.chat_id in self._prejoin_tasks:
                 return
             await self.change_stream(client, update.chat_id)
 
