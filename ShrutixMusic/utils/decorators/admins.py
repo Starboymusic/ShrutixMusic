@@ -1,3 +1,4 @@
+# ShrutixMusic/utils/decorators/admins.py
 from pyrogram.enums import ChatType
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -109,6 +110,64 @@ def AdminRightsCheck(mystic):
                             return
                         else:
                             return await message.reply_text(_["admin_14"])
+
+        return await mystic(client, message, _, chat_id)
+
+    return wrapper
+
+
+def AdminRightsCheckAnyTime(mystic):
+    """Same as AdminRightsCheck but does not require an active stream in the chat."""
+
+    async def wrapper(client, message):
+        if await is_maintenance() is False:
+            if message.from_user.id not in SUDOERS:
+                return await message.reply_text(
+                    text=f"{nand.mention} ɪs ᴜɴᴅᴇʀ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ, ᴠɪsɪᴛ <a href={SUPPORT_CHAT}>sᴜᴘᴘᴏʀᴛ ᴄʜᴀᴛ</a> ғᴏʀ ᴋɴᴏᴡɪɴɢ ᴛʜᴇ ʀᴇᴀsᴏɴ.",
+                    disable_web_page_preview=True,
+                )
+
+        try:
+            await message.delete()
+        except:
+            pass
+
+        try:
+            language = await get_lang(message.chat.id)
+            _ = get_string(language)
+        except:
+            _ = get_string("en")
+        if message.sender_chat:
+            upl = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            text="ʜᴏᴡ ᴛᴏ ғɪx ?",
+                            callback_data="AnonymousAdmin",
+                        ),
+                    ]
+                ]
+            )
+            return await message.reply_text(_["general_3"], reply_markup=upl)
+        if message.command[0][0] == "c":
+            chat_id = await get_cmode(message.chat.id)
+            if chat_id is None:
+                return await message.reply_text(_["setting_7"])
+            try:
+                await nand.get_chat(chat_id)
+            except:
+                return await message.reply_text(_["cplay_4"])
+        else:
+            chat_id = message.chat.id
+        is_non_admin = await is_nonadmin_chat(message.chat.id)
+        if not is_non_admin:
+            if message.from_user.id not in SUDOERS:
+                admins = adminlist.get(message.chat.id)
+                if not admins:
+                    return await message.reply_text(_["admin_13"])
+                else:
+                    if message.from_user.id not in admins:
+                        return await message.reply_text(_["admin_14"])
 
         return await mystic(client, message, _, chat_id)
 
