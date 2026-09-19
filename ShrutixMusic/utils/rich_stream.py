@@ -2,7 +2,7 @@ import math
 import random
 import re
 
-from pyrogram import enums, types
+from pyrogram import enums, errors, types
 
 from ShrutixMusic.misc import db
 from ShrutixMusic.utils.database import get_lang
@@ -12,6 +12,8 @@ from strings import get_string
 _TAG_RE = re.compile(r"<(/?)(b|a)(?:\s+href=([^>]+))?>", re.IGNORECASE)
 
 _consumed = set()
+
+_FORBIDDEN = (errors.ChatSendPhotosForbidden, errors.ChatSendMediaForbidden)
 
 
 async def _lang(chat_id):
@@ -194,11 +196,31 @@ def _message_key(message):
     return (message.chat.id, message.id)
 
 
-async def _deliver(client, target_chat_id, blocks, replace=None):
+def _strip_photo(blocks):
+    return [b for b in blocks if not isinstance(b, types.InputRichBlockPhoto)]
+
+
+async def _edit_rich(message, blocks):
+    try:
+        return await message.edit_text(
+            rich_message=types.InputRichMessage(blocks=blocks)
+        )
+    except _FORBIDDEN:
+        plain = _strip_photo(blocks)
+        if len(plain) == len(blocks):
+            raise
+        return await message.edit_text(
+            rich_message=types.InputRichMessage(blocks=plain)
+        )
+
+
+async def _try_deliver(client, target_chat_id, blocks, replace):
     rich = types.InputRichMessage(blocks=blocks)
     if replace is not None:
         try:
             edited = await replace.edit_text(rich_message=rich)
+        except _FORBIDDEN:
+            raise
         except Exception:
             try:
                 await replace.delete()
@@ -208,6 +230,16 @@ async def _deliver(client, target_chat_id, blocks, replace=None):
             _consumed.add(_message_key(replace))
             return edited or replace
     return await client.send_rich_message(target_chat_id, rich_message=rich)
+
+
+async def _deliver(client, target_chat_id, blocks, replace=None):
+    try:
+        return await _try_deliver(client, target_chat_id, blocks, replace)
+    except _FORBIDDEN:
+        plain = _strip_photo(blocks)
+        if len(plain) == len(blocks):
+            raise
+        return await _try_deliver(client, target_chat_id, plain, replace)
 
 
 async def release_mystic(mystic):
@@ -285,7 +317,7 @@ async def update_now_playing_progress(mystic, chat_id, played, dur, playing=True
         return None
     _ = await _lang(chat_id)
     blocks = build_now_playing_blocks(_, photo, caption_html, chat_id, played, dur, playing)
-    return await mystic.edit_text(rich_message=types.InputRichMessage(blocks=blocks))
+    return await _edit_rich(mystic, blocks)
 
 
 async def set_now_playing_state(chat_id, playing):
@@ -302,6 +334,6 @@ async def set_now_playing_state(chat_id, playing):
     _ = await _lang(chat_id)
     blocks = build_now_playing_blocks(_, photo, caption_html, chat_id, played, dur, playing)
     try:
-        return await mystic.edit_text(rich_message=types.InputRichMessage(blocks=blocks))
+        return await _edit_rich(mystic, blocks)
     except Exception:
         return None
