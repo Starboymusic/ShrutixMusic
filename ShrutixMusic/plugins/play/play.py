@@ -10,6 +10,7 @@ from ShrutixMusic import Apple, Resso, SoundCloud, Spotify, Telegram, YouTube, n
 from ShrutixMusic.core.call import Shruti
 from ShrutixMusic.utils import seconds_to_min, time_to_seconds
 from ShrutixMusic.utils.channelplay import get_channeplayCB
+from ShrutixMusic.utils.database import is_active_chat
 from ShrutixMusic.utils.decorators.language import languageCB
 from ShrutixMusic.utils.decorators.play import PlayWrapper
 from ShrutixMusic.utils.formatters import formats
@@ -53,6 +54,53 @@ async def play_commnd(
     url,
     fplay,
 ):
+    early = False
+    if await _wants_prejoin(message, chat_id, playmode, url):
+        early = await Shruti.prejoin_start(chat_id)
+    try:
+        await _play_flow(
+            client,
+            message,
+            _,
+            chat_id,
+            video,
+            channel,
+            playmode,
+            url,
+            fplay,
+        )
+    finally:
+        if early:
+            try:
+                await Shruti.prejoin_settle(chat_id)
+            except Exception:
+                pass
+
+
+async def _wants_prejoin(message, chat_id, playmode, url):
+    if str(playmode) != "Direct":
+        return False
+    if await is_active_chat(chat_id):
+        return False
+    reply = message.reply_to_message
+    if reply and (reply.audio or reply.voice or reply.video or reply.document):
+        return False
+    if url:
+        return await YouTube.exists(url)
+    return len(message.command) >= 2
+
+
+async def _play_flow(
+    client,
+    message: Message,
+    _,
+    chat_id,
+    video,
+    channel,
+    playmode,
+    url,
+    fplay,
+):
     mystic = await message.reply_text(
         _["play_2"].format(channel) if channel else _["play_1"]
     )
@@ -61,7 +109,7 @@ async def play_commnd(
     plist_type = None
     spotify = None
     user_id = message.from_user.id
-    user_name = message.from_user.first_name
+    user_name = message.from_user.mention
     audio_telegram = (
         (message.reply_to_message.audio or message.reply_to_message.voice)
         if message.reply_to_message
@@ -106,9 +154,9 @@ async def play_commnd(
                 )
             except Exception as e:
                 ex_type = type(e).__name__
-                err = e if ex_type == "AssistantErr" else _["general_2"].format(ex_type)
+                err = e if ex_type == "AssistantErr" else _["general_2"].format(f"{ex_type}: {e}")
                 return await mystic.edit_text(err)
-            return await mystic.delete()
+            return
         return
     elif video_telegram:
         if message.reply_to_message.document:
@@ -150,9 +198,9 @@ async def play_commnd(
                 )
             except Exception as e:
                 ex_type = type(e).__name__
-                err = e if ex_type == "AssistantErr" else _["general_2"].format(ex_type)
+                err = e if ex_type == "AssistantErr" else _["general_2"].format(f"{ex_type}: {e}")
                 return await mystic.edit_text(err)
-            return await mystic.delete()
+            return
         return
     elif url:
         if await YouTube.exists(url):
@@ -227,7 +275,7 @@ async def play_commnd(
                 cap = _["play_11"].format(message.from_user.first_name)
             else:
                 return await mystic.edit_text(_["play_15"])
-        elif await apple.valid(url):
+        elif await Apple.valid(url):
             if "album" in url:
                 try:
                     details, track_id = await Apple.track(url)
@@ -283,9 +331,9 @@ async def play_commnd(
                 )
             except Exception as e:
                 ex_type = type(e).__name__
-                err = e if ex_type == "AssistantErr" else _["general_2"].format(ex_type)
+                err = e if ex_type == "AssistantErr" else _["general_2"].format(f"{ex_type}: {e}")
                 return await mystic.edit_text(err)
-            return await mystic.delete()
+            return
         else:
             try:
                 await Shruti.stream_call(url)
@@ -296,7 +344,7 @@ async def play_commnd(
                     text=_["play_17"],
                 )
             except Exception as e:
-                return await mystic.edit_text(_["general_2"].format(type(e).__name__))
+                return await mystic.edit_text(_["general_2"].format(f"{type(e).__name__}: {e}"))
             await mystic.edit_text(_["str_2"])
             try:
                 await stream(
@@ -313,7 +361,7 @@ async def play_commnd(
                 )
             except Exception as e:
                 ex_type = type(e).__name__
-                err = e if ex_type == "AssistantErr" else _["general_2"].format(ex_type)
+                err = e if ex_type == "AssistantErr" else _["general_2"].format(f"{ex_type}: {e}")
                 return await mystic.edit_text(err)
             return await play_logs(message, streamtype="M3u8 or Index Link")
     else:
@@ -369,9 +417,8 @@ async def play_commnd(
             )
         except Exception as e:
             ex_type = type(e).__name__
-            err = e if ex_type == "AssistantErr" else _["general_2"].format(ex_type)
+            err = e if ex_type == "AssistantErr" else _["general_2"].format(f"{ex_type}: {e}")
             return await mystic.edit_text(err)
-        await mystic.delete()
         return await play_logs(message, streamtype=streamtype)
     else:
         if plist_type:
@@ -453,6 +500,22 @@ async def play_music(client, CallbackQuery, _):
         await CallbackQuery.answer()
     except:
         pass
+    early = await Shruti.prejoin_start(chat_id)
+    try:
+        await _play_music_flow(
+            _, CallbackQuery, vidid, mode, cplay, fplay, chat_id, channel, user_name
+        )
+    finally:
+        if early:
+            try:
+                await Shruti.prejoin_settle(chat_id)
+            except Exception:
+                pass
+
+
+async def _play_music_flow(
+    _, CallbackQuery, vidid, mode, cplay, fplay, chat_id, channel, user_name
+):
     mystic = await CallbackQuery.message.reply_text(
         _["play_2"].format(channel) if channel else _["play_1"]
     )
@@ -496,9 +559,9 @@ async def play_music(client, CallbackQuery, _):
         )
     except Exception as e:
         ex_type = type(e).__name__
-        err = e if ex_type == "AssistantErr" else _["general_2"].format(ex_type)
+        err = e if ex_type == "AssistantErr" else _["general_2"].format(f"{ex_type}: {e}")
         return await mystic.edit_text(err)
-    return await mystic.delete()
+    return
 
 
 @nand.on_callback_query(filters.regex("ShrutimousAdmin") & ~BANNED_USERS)
@@ -594,9 +657,9 @@ async def play_playlists_command(client, CallbackQuery, _):
         )
     except Exception as e:
         ex_type = type(e).__name__
-        err = e if ex_type == "AssistantErr" else _["general_2"].format(ex_type)
+        err = e if ex_type == "AssistantErr" else _["general_2"].format(f"{ex_type}: {e}")
         return await mystic.edit_text(err)
-    return await mystic.delete()
+    return
 
 
 @nand.on_callback_query(filters.regex("slider") & ~BANNED_USERS)
