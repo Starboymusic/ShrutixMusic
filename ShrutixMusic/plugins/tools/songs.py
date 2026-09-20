@@ -6,7 +6,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from youtube_search import YoutubeSearch
 import requests
-from ShrutixMusic import app
+from ShrutixMusic import nand as app
 from ShrutixMusic.platforms.Youtube import download_song as yt_api_download_song
 
 # Define a dictionary to track the last message timestamp for each user
