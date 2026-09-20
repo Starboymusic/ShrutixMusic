@@ -1,4 +1,3 @@
-# ShrutixMusic/utils/database.py
 import random
 from typing import Dict, List, Union
 
@@ -12,6 +11,7 @@ assdb = mongodb.assistants
 blacklist_chatdb = mongodb.blacklistChat
 blockeddb = mongodb.blockedusers
 chatsdb = mongodb.chats
+chatlinksdb = mongodb.chat_links
 channeldb = mongodb.cplaymode
 countdb = mongodb.upcount
 gbansdb = mongodb.gban
@@ -24,7 +24,6 @@ autoplaydb = mongodb.autoplay
 sudoersdb = mongodb.sudoers
 usersdb = mongodb.tgusersdb
 
-# Shifting to memory [mongo sucks often]
 active = []
 activevideo = []
 assistantdict = {}
@@ -516,6 +515,30 @@ async def add_served_chat(chat_id: int):
     if is_served:
         return
     return await chatsdb.insert_one({"chat_id": chat_id})
+
+
+async def remove_served_chat(chat_id: int):
+    is_served = await is_served_chat(chat_id)
+    if not is_served:
+        return
+    return await chatsdb.delete_one({"chat_id": chat_id})
+
+
+async def save_chat_link(chat_id: int, link: str):
+    return await chatlinksdb.update_one(
+        {"chat_id": chat_id}, {"$set": {"link": link}}, upsert=True
+    )
+
+
+async def get_chat_link(chat_id: int):
+    data = await chatlinksdb.find_one({"chat_id": chat_id})
+    if not data:
+        return None
+    return data.get("link")
+
+
+async def delete_chat_link(chat_id: int):
+    return await chatlinksdb.delete_one({"chat_id": chat_id})
 
 
 async def blacklisted_chats() -> list:
