@@ -242,6 +242,21 @@ async def _deliver(client, target_chat_id, blocks, replace=None):
         return await _try_deliver(client, target_chat_id, plain, replace)
 
 
+def caption_blocks(caption_html):
+    return _html_caption_to_blocks(caption_html)
+
+
+async def edit_rich(message, blocks):
+    return await _edit_rich(message, blocks)
+
+
+async def deliver_rich(client, target_chat_id, blocks, replace=None):
+    result = await _deliver(client, target_chat_id, blocks, replace)
+    if replace is not None:
+        _consumed.discard(_message_key(replace))
+    return result
+
+
 async def release_mystic(mystic):
     if mystic is None:
         return
