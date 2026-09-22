@@ -56,7 +56,7 @@ async def play_commnd(
 ):
     early = False
     if await _wants_prejoin(message, chat_id, playmode, url):
-        early = await Shruti.prejoin_start(chat_id)
+        early = await Shruti.prejoin_start(chat_id, video=bool(video))
     try:
         await _play_flow(
             client,
@@ -109,7 +109,7 @@ async def _play_flow(
     plist_type = None
     spotify = None
     user_id = message.from_user.id
-    user_name = message.from_user.mention
+    user_name = message.from_user.first_name
     audio_telegram = (
         (message.reply_to_message.audio or message.reply_to_message.voice)
         if message.reply_to_message
@@ -500,7 +500,9 @@ async def play_music(client, CallbackQuery, _):
         await CallbackQuery.answer()
     except:
         pass
-    early = await Shruti.prejoin_start(chat_id)
+    early = False
+    if not await is_active_chat(chat_id):
+        early = await Shruti.prejoin_start(chat_id, video=(mode == "v"))
     try:
         await _play_music_flow(
             _, CallbackQuery, vidid, mode, cplay, fplay, chat_id, channel, user_name
