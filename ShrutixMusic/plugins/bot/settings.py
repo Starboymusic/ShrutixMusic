@@ -180,26 +180,30 @@ async def without_Admin_rights(client, CallbackQuery, _):
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from ShrutixMusic import nand
 
-REPO_VIDEO = "https://files.catbox.moe/aoafwn.mp4"
+# REPO_VIDEO = "https://files.catbox.moe/aoafwn.mp4"
 
-@nand.on_message(filters.command(["repo", "source"]) & filters.private)
-async def send_repo(_, message: Message):
-    await message.reply_video(
-        video=REPO_VIDEO,
-        caption=(
-            "<b>✨ ʜᴇʏ ᴅᴇᴀʀ, ʜᴇʀᴇ ɪꜱ ᴛʜᴇ ᴏꜰꜰɪᴄɪᴀʟ ʀᴇᴘᴏꜱɪᴛᴏʀʏ ᴏꜰ ᴛʜɪꜱ ʙᴏᴛ ✨</b>\n\n"
-            "🔗 ᴅᴏɴ'ᴛ ꜰᴏʀɢᴇᴛ ᴛᴏ ɢɪᴠᴇ ᴀ ꜱᴛᴀʀ 🌟 ᴀɴᴅ ꜰᴏʟʟᴏᴡ!\n\n"
-            "🧡 ᴄʀᴇᴅɪᴛꜱ : <a href='https://t.me/ShrutiBots'>@ShrutiBots</a>"
-        ),
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [InlineKeyboardButton("🎵 Music + Management Bot Repo", url="https://github.com/NoxxOP/ShrutiMusic")],
-                [InlineKeyboardButton("🎧 Only Music Bot Repo", url="https://github.com/NoxxOP/ShrutixMusic")]
-            ]
-        ),
-        supports_streaming=True,
-        has_spoiler=True,
-    )
+# @nand.on_message(filters.command(["repo", "source"]) & filters.private)
+# async def send_repo(_, message: Message):
+#     await message.reply_video(
+#         video=REPO_VIDEO,
+#         caption=(
+#             "..."
+#         ),
+#         reply_markup=InlineKeyboardMarkup(
+#             [
+#                 [InlineKeyboardButton(
+#                     "🎵 Music + Management Bot Repo",
+#                     url="https://github.com/NoxxOP/ShrutiMusic"
+#                 )],
+#                 [InlineKeyboardButton(
+#                     "🎧 Only Music Bot Repo",
+#                     url="https://github.com/NoxxOP/ShrutixMusic"
+#                 )]
+#             ]
+#         ),
+#         supports_streaming=True,
+#         has_spoiler=True,
+#     )
 
 @nand.on_callback_query(filters.regex("FERRARIUDTI") & ~BANNED_USERS)
 @ActualAdminCB
